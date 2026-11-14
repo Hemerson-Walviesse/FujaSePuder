@@ -1,0 +1,646 @@
+package com.hemerson.FujaSePuder;
+
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
+import com.badlogic.gdx.ScreenAdapter;
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.OrthographicCamera;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.MathUtils;
+import com.badlogic.gdx.math.Rectangle;
+import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.utils.Align;
+import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.utils.ScreenUtils;
+import com.badlogic.gdx.utils.viewport.FitViewport;
+import com.hemerson.FujaSePuder.entidades.ClasseHeroi;
+import com.hemerson.FujaSePuder.entidades.Heroi;
+import com.hemerson.FujaSePuder.entidades.Monstro;
+import com.hemerson.FujaSePuder.hordas.GerenciadorDeHordas;
+import com.hemerson.FujaSePuder.itens.ItemDrop;
+import com.hemerson.FujaSePuder.itens.Recompensa;
+import com.hemerson.FujaSePuder.itens.RecompensaElemento;
+import com.hemerson.FujaSePuder.itens.RecompensaPerderBuff;
+import com.hemerson.FujaSePuder.itens.TipoBuff;
+import com.hemerson.FujaSePuder.poderes.ElementoArma;
+import com.hemerson.FujaSePuder.itens.SorteioRecompensas;
+import com.hemerson.FujaSePuder.poderes.Poder;
+import com.hemerson.FujaSePuder.poderes.Projetil;
+import com.hemerson.FujaSePuder.poderes.RecompensaPoder;
+import com.hemerson.FujaSePuder.poderes.TipoPoder;
+
+/**
+ * Tela da fase. O ataque basico e os poderes atacam sozinhos.
+ * O primeiro poder e escolhido ao terminar a horda 1.
+ * Desktop: WASD/setas para andar, ESPACO para a habilidade especial.
+ * Android: toque e segure para andar, toque no botao redondo para a habilidade.
+ */
+public class TelaJogo extends ScreenAdapter {
+
+    private static final float LARGURA = 800f;
+    private static final float ALTURA = 480f;
+    private static final int HORDAS_POR_FASE = 10;
+
+    // O mundo e maior que a tela: a camera segue o heroi
+    private static final float MUNDO_LARGURA = 1600f;
+    private static final float MUNDO_ALTURA = 960f;
+    private static final float TAMANHO_GRADE = 80f;
+
+    // Botao da habilidade (usado no celular, mas tambem funciona com clique)
+    private static final float BOTAO_X = LARGURA - 70f;
+    private static final float BOTAO_Y = 70f;
+    private static final float BOTAO_RAIO = 45f;
+
+    // Cards da escolha de recompensa
+    private static final float CARD_LARGURA = 210f;
+    private static final float CARD_ALTURA = 200f;
+    private static final float CARD_PEQUENO_LARGURA = 180f; // usado quando ha mais de 3 opcoes
+    private static final float CARD_PEQUENO_ALTURA = 80f;
+
+    /** Horda em que o Humano escolhe o elemento da arma (Fogo, Gelo ou Laser). */
+    private static final int HORDA_ESCOLHA_ELEMENTO = 3;
+
+    private enum ModoEscolha { RECOMPENSA, PRIMEIRO_PODER, ELEMENTO, TROCA_ELEMENTO, PERDER_BUFF }
+
+    // Drops de vida dos monstros
+    private static final int MAX_DROPS_POR_HORDA = 1;
+    private static final float CURA_DO_DROP = 25f;
+
+    private final FujaSePuder jogo;
+    private final ClasseHeroi classe;
+
+    private final OrthographicCamera camera = new OrthographicCamera();
+    private final FitViewport viewport = new FitViewport(LARGURA, ALTURA, camera);
+    private final OrthographicCamera cameraHud = new OrthographicCamera();
+    private final FitViewport viewportHud = new FitViewport(LARGURA, ALTURA, cameraHud);
+    private final ShapeRenderer shapes = new ShapeRenderer();
+    private final SpriteBatch batch = new SpriteBatch();
+    private final BitmapFont fonte = new BitmapFont();
+
+    private final Vector3 toque = new Vector3();
+    private final Vector3 toqueHud = new Vector3();
+    private final Vector2 movimento = new Vector2();
+    private final Color corTemp = new Color();
+    private final Array<Vector2> linhasAtaque = new Array<>();
+    private final Array<Monstro> atingidos = new Array<>();
+    private float tempoEfeitoAtaque;
+
+    private Heroi heroi;
+    private Array<Monstro> monstros;
+    private Array<Projetil> projeteis;
+    private GerenciadorDeHordas hordas;
+    private int abates;
+
+    // Drops e recompensas
+    private Array<ItemDrop> drops;
+    private final Array<Recompensa> opcoes = new Array<>();
+    private final Array<Rectangle> cards = new Array<>();
+    private ModoEscolha modo = ModoEscolha.RECOMPENSA;
+    private int escolhasPendentes;
+    private int dropsNestaHorda;
+    private int hordaDosDrops;
+
+    public TelaJogo(FujaSePuder jogo, ClasseHeroi classe) {
+        this.jogo = jogo;
+        this.classe = classe;
+        reiniciar();
+    }
+
+    private void reiniciar() {
+        heroi = new Heroi(MUNDO_LARGURA / 2f, MUNDO_ALTURA / 2f, classe);
+        monstros = new Array<>();
+        projeteis = new Array<>();
+        hordas = new GerenciadorDeHordas(HORDAS_POR_FASE, MUNDO_LARGURA, MUNDO_ALTURA);
+        abates = 0;
+        drops = new Array<>();
+        opcoes.clear();
+        escolhasPendentes = 0;
+        dropsNestaHorda = 0;
+        hordaDosDrops = 0;
+        modo = ModoEscolha.RECOMPENSA;
+        cards.clear();
+        linhasAtaque.clear();
+        tempoEfeitoAtaque = 0f;
+        atualizarCamera();
+    }
+
+    @Override
+    public void render(float delta) {
+        delta = Math.min(delta, 1 / 30f); // evita saltos se o jogo travar por um instante
+
+        if (escolhendoRecompensa()) {
+            processarEscolha(); // jogo pausado enquanto escolhe
+        } else if (heroi.estaVivo() && !hordas.concluida()) {
+            atualizar(delta);
+        } else if (Gdx.input.isKeyJustPressed(Input.Keys.R)) {
+            reiniciar();
+        } else if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE) || Gdx.input.justTouched()) {
+            jogo.setScreen(new TelaSelecao(jogo));
+            dispose();
+            return;
+        }
+
+        desenhar();
+    }
+
+    // ------------------------------------------------------------------ logica
+
+    private void atualizar(float delta) {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.SPACE) || (Gdx.input.justTouched() && tocandoNoBotao())) {
+            heroi.usarHabilidade(monstros);
+        }
+
+        moverHeroi(delta);
+        atualizarCamera();
+        heroi.atualizar(delta);
+        hordas.atualizar(delta, monstros, heroi.posicao);
+
+        // Recompensa garantida ao terminar cada horda (menos a ultima, que encerra a fase)
+        if (hordas.consumirFimDeHorda() && !hordas.concluida()) escolhasPendentes++;
+
+        for (int i = 0; i < monstros.size; i++) {
+            Monstro m = monstros.get(i);
+            m.atualizar(delta, heroi.posicao);
+            if (m.colideCom(heroi)) heroi.receberDano(m.dano);
+        }
+
+        atacarAutomaticamente();
+        atualizarPoderes(delta);
+        removerMortos();
+
+        if (tempoEfeitoAtaque > 0) tempoEfeitoAtaque -= delta;
+        atualizarDrops(delta);
+    }
+
+    private void atacarAutomaticamente() {
+        if (!heroi.podeAtacar()) return;
+
+        // Escolhe os N monstros mais proximos dentro do alcance (N = 2 para o Anjo)
+        atingidos.clear();
+        for (int i = 0; i < heroi.alvosPorAtaque(); i++) {
+            Monstro maisProximo = null;
+            float menorDistancia = heroi.alcanceAtaque;
+            for (int j = 0; j < monstros.size; j++) {
+                Monstro m = monstros.get(j);
+                if (atingidos.contains(m, true)) continue;
+                float d = m.posicao.dst(heroi.posicao);
+                if (d <= menorDistancia) {
+                    menorDistancia = d;
+                    maisProximo = m;
+                }
+            }
+            if (maisProximo == null) break;
+            atingidos.add(maisProximo);
+        }
+        if (atingidos.isEmpty()) return;
+
+        float dano = heroi.getDanoAtual();
+        linhasAtaque.clear();
+        for (int i = 0; i < atingidos.size; i++) {
+            Monstro m = atingidos.get(i);
+            m.receberDano(dano);
+            heroi.aoCausarDano(dano);
+            linhasAtaque.add(new Vector2(m.posicao));
+        }
+        heroi.registrarAtaque();
+        tempoEfeitoAtaque = 0.1f;
+    }
+
+    private void atualizarPoderes(float delta) {
+        for (int i = 0; i < heroi.poderes.size; i++) {
+            heroi.poderes.get(i).atualizar(delta, heroi, monstros, projeteis);
+        }
+
+        for (int i = projeteis.size - 1; i >= 0; i--) {
+            Projetil p = projeteis.get(i);
+            p.atualizar(delta);
+            for (int j = 0; j < monstros.size && p.isAtivo(); j++) {
+                Monstro m = monstros.get(j);
+                if (m.estaVivo() && p.podeAcertar(m)) {
+                    p.registrarAcerto(m);
+                    p.origem.aoAcertar(p, m, heroi, monstros);
+                }
+            }
+            if (!p.isAtivo()) projeteis.removeIndex(i);
+        }
+    }
+
+    /** Centraliza a camera no heroi, sem mostrar nada fora do mundo. */
+    private void atualizarCamera() {
+        float meioL = LARGURA / 2f;
+        float meioA = ALTURA / 2f;
+        camera.position.set(
+            MathUtils.clamp(heroi.posicao.x, meioL, MUNDO_LARGURA - meioL),
+            MathUtils.clamp(heroi.posicao.y, meioA, MUNDO_ALTURA - meioA), 0);
+        camera.update();
+    }
+
+    /** Diz se o toque atual caiu no botao da habilidade (coordenadas do HUD). */
+    private boolean tocandoNoBotao() {
+        toqueHud.set(Gdx.input.getX(), Gdx.input.getY(), 0);
+        viewportHud.unproject(toqueHud);
+        return Vector2.dst(toqueHud.x, toqueHud.y, BOTAO_X, BOTAO_Y) <= BOTAO_RAIO;
+    }
+
+    private void moverHeroi(float delta) {
+        movimento.setZero();
+
+        if (Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP))    movimento.y += 1;
+        if (Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN))  movimento.y -= 1;
+        if (Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT))  movimento.x -= 1;
+        if (Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT)) movimento.x += 1;
+
+        // Toque (Android) ou clique segurado (desktop): anda em direcao ao ponto tocado
+        if (Gdx.input.isTouched() && !tocandoNoBotao()) {
+            toque.set(Gdx.input.getX(), Gdx.input.getY(), 0);
+            viewport.unproject(toque); // coordenadas do mundo
+            movimento.set(toque.x - heroi.posicao.x, toque.y - heroi.posicao.y);
+            if (movimento.len() < 5f) movimento.setZero();
+        }
+
+        if (!movimento.isZero()) {
+            movimento.nor().scl(heroi.velocidade * delta);
+            heroi.posicao.add(movimento);
+        }
+
+        float meio = heroi.tamanho / 2f;
+        heroi.posicao.x = MathUtils.clamp(heroi.posicao.x, meio, MUNDO_LARGURA - meio);
+        heroi.posicao.y = MathUtils.clamp(heroi.posicao.y, meio, MUNDO_ALTURA - meio);
+    }
+
+    private void removerMortos() {
+        for (int i = monstros.size - 1; i >= 0; i--) {
+            if (!monstros.get(i).estaVivo()) {
+                Monstro morto = monstros.removeIndex(i);
+                abates++;
+
+                if (hordas.getHordaAtual() != hordaDosDrops) {
+                    hordaDosDrops = hordas.getHordaAtual();
+                    dropsNestaHorda = 0;
+                }
+                // Drop de vida: no maximo 1 por horda
+                if (dropsNestaHorda < MAX_DROPS_POR_HORDA && MathUtils.randomBoolean(morto.chanceDrop)) {
+                    drops.add(new ItemDrop(morto.posicao.x, morto.posicao.y));
+                    dropsNestaHorda++;
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------- drops / recompensas
+
+    private void atualizarDrops(float delta) {
+        for (int i = drops.size - 1; i >= 0; i--) {
+            ItemDrop d = drops.get(i);
+            d.atualizar(delta);
+            if (d.colideCom(heroi)) {
+                drops.removeIndex(i);
+                heroi.curar(CURA_DO_DROP);
+            } else if (d.expirou()) {
+                drops.removeIndex(i);
+            }
+        }
+        if (escolhasPendentes > 0 && !escolhendoRecompensa()) abrirEscolhaDeHorda();
+    }
+
+    private boolean escolhendoRecompensa() {
+        return opcoes.size > 0;
+    }
+
+    /** Escolha de fim de horda: primeiro poder, elemento (Humano) ou recompensa normal. */
+    private void abrirEscolhaDeHorda() {
+        escolhasPendentes--;
+        opcoes.clear();
+        if (heroi.poderes.size == 0) {
+            modo = ModoEscolha.PRIMEIRO_PODER;
+            for (TipoPoder t : TipoPoder.daClasse(classe)) opcoes.add(new RecompensaPoder(t, true, 1));
+        } else if (classe == ClasseHeroi.HUMANO && heroi.elemento == null
+                   && hordas.getHordaAtual() >= HORDA_ESCOLHA_ELEMENTO) {
+            abrirEscolhaElemento(false);
+            return;
+        } else {
+            modo = ModoEscolha.RECOMPENSA;
+            opcoes.addAll(SorteioRecompensas.sortear(heroi, 3));
+        }
+        montarCards(opcoes.size);
+    }
+
+    private void abrirEscolhaElemento(boolean troca) {
+        opcoes.clear();
+        modo = troca ? ModoEscolha.TROCA_ELEMENTO : ModoEscolha.ELEMENTO;
+        for (ElementoArma e : ElementoArma.values()) {
+            if (e != heroi.elemento) opcoes.add(new RecompensaElemento(e));
+        }
+        montarCards(opcoes.size);
+    }
+
+    /** Monta as cartas da penalidade. Retorna false se o heroi nao tem nada para perder. */
+    private boolean abrirPerderBuff() {
+        opcoes.clear();
+        modo = ModoEscolha.PERDER_BUFF;
+
+        Array<TipoBuff> vistos = new Array<>();
+        for (int i = 0; i < heroi.buffs.size; i++) {
+            TipoBuff b = heroi.buffs.get(i);
+            if (vistos.contains(b, true)) continue;
+            vistos.add(b);
+            int quantidade = 0;
+            for (int k = 0; k < heroi.buffs.size; k++) if (heroi.buffs.get(k) == b) quantidade++;
+            opcoes.add(RecompensaPerderBuff.doBuff(b, quantidade));
+        }
+        if (heroi.elemento != null) {
+            for (int espaco = 0; espaco < 2; espaco++) {
+                if (heroi.niveisElemento[espaco] > 0) opcoes.add(RecompensaPerderBuff.daMelhoria(heroi, espaco));
+            }
+        }
+        if (opcoes.size > 12) opcoes.truncate(12);
+        if (opcoes.isEmpty()) return false;
+        montarCards(opcoes.size);
+        return true;
+    }
+
+    /** Depois de cada escolha: resolve pedidos de troca, penalidades e escolhas de horda pendentes. */
+    private void proximaEscolha() {
+        opcoes.clear();
+        if (heroi.pedidoTrocaElemento) {
+            heroi.pedidoTrocaElemento = false;
+            abrirEscolhaElemento(true);
+            return;
+        }
+        if (heroi.penalidadesPendentes > 0) {
+            if (abrirPerderBuff()) return;
+            heroi.penalidadesPendentes = 0; // nao tinha buffs para perder
+        }
+        if (escolhasPendentes > 0) abrirEscolhaDeHorda();
+    }
+
+    private void montarCards(int quantidade) {
+        cards.clear();
+        if (quantidade <= 3) {
+            float espaco = (LARGURA - quantidade * CARD_LARGURA) / (quantidade + 1);
+            for (int i = 0; i < quantidade; i++) {
+                cards.add(new Rectangle(espaco + i * (CARD_LARGURA + espaco), 120, CARD_LARGURA, CARD_ALTURA));
+            }
+        } else {
+            int colunas = 4;
+            float espaco = (LARGURA - colunas * CARD_PEQUENO_LARGURA) / (colunas + 1);
+            for (int i = 0; i < quantidade; i++) {
+                int col = i % colunas;
+                int linha = i / colunas;
+                cards.add(new Rectangle(espaco + col * (CARD_PEQUENO_LARGURA + espaco),
+                    300 - linha * (CARD_PEQUENO_ALTURA + 15), CARD_PEQUENO_LARGURA, CARD_PEQUENO_ALTURA));
+            }
+        }
+    }
+
+    private void processarEscolha() {
+        int escolha = -1;
+        for (int k = 0; k < 9; k++) {
+            if (Gdx.input.isKeyJustPressed(Input.Keys.NUM_1 + k)) escolha = k;
+        }
+        if (Gdx.input.justTouched()) {
+            toqueHud.set(Gdx.input.getX(), Gdx.input.getY(), 0);
+            viewportHud.unproject(toqueHud);
+            for (int i = 0; i < cards.size; i++) {
+                if (cards.get(i).contains(toqueHud.x, toqueHud.y)) escolha = i;
+            }
+        }
+
+        if (escolha >= 0 && escolha < opcoes.size) {
+            opcoes.get(escolha).aplicar(heroi);
+            proximaEscolha();
+        }
+    }
+
+    // ---------------------------------------------------------------- desenho
+
+    private void desenhar() {
+        ScreenUtils.clear(0.10f, 0.10f, 0.12f, 1f);
+
+        // Mundo (segue o heroi)
+        viewport.apply();
+        shapes.setProjectionMatrix(camera.combined);
+        desenharLinhasMundo();
+        desenharFormasMundo();
+
+        // HUD (fixo na tela)
+        viewportHud.apply();
+        shapes.setProjectionMatrix(cameraHud.combined);
+        batch.setProjectionMatrix(cameraHud.combined);
+        desenharHud();
+        desenharTextos();
+        if (escolhendoRecompensa()) desenharEscolha();
+    }
+
+    private void desenharLinhasMundo() {
+        shapes.begin(ShapeRenderer.ShapeType.Line);
+
+        // Grade do chao e borda do mundo
+        shapes.setColor(0.16f, 0.16f, 0.19f, 1f);
+        for (float x = 0; x <= MUNDO_LARGURA; x += TAMANHO_GRADE) shapes.line(x, 0, x, MUNDO_ALTURA);
+        for (float y = 0; y <= MUNDO_ALTURA; y += TAMANHO_GRADE) shapes.line(0, y, MUNDO_LARGURA, y);
+        shapes.setColor(Color.GRAY);
+        shapes.rect(0, 0, MUNDO_LARGURA, MUNDO_ALTURA);
+
+        // Alcance do ataque basico e raio do ataque
+        shapes.setColor(0.3f, 0.3f, 0.4f, 1f);
+        shapes.circle(heroi.posicao.x, heroi.posicao.y, heroi.alcanceAtaque);
+        if (tempoEfeitoAtaque > 0) {
+            shapes.setColor(Color.YELLOW);
+            for (int i = 0; i < linhasAtaque.size; i++) shapes.line(heroi.posicao, linhasAtaque.get(i));
+        }
+
+        // Efeitos dos poderes (explosoes, raios, ondas)
+        for (int i = 0; i < heroi.poderes.size; i++) heroi.poderes.get(i).desenharLinhas(shapes, heroi);
+
+        // Onda da habilidade especial em area
+        float raio = heroi.getRaioHabilidade();
+        if (heroi.getTempoEfeitoHabilidade() > 0 && raio > 0) {
+            float progresso = 1f - heroi.getTempoEfeitoHabilidade() / heroi.getDuracaoEfeitoHabilidade();
+            shapes.setColor(classe.cor);
+            shapes.circle(heroi.posicao.x, heroi.posicao.y, raio * progresso);
+        }
+
+        // Aura da Furia do Demonio
+        if (heroi.emFuria()) {
+            shapes.setColor(Color.ORANGE);
+            shapes.circle(heroi.posicao.x, heroi.posicao.y, heroi.tamanho * 0.9f);
+            shapes.circle(heroi.posicao.x, heroi.posicao.y, heroi.tamanho * 1.0f);
+        }
+
+        shapes.end();
+    }
+
+    private void desenharFormasMundo() {
+        shapes.begin(ShapeRenderer.ShapeType.Filled);
+
+        // Itens de vida no chao
+        for (int i = 0; i < drops.size; i++) {
+            ItemDrop d = drops.get(i);
+            if (!d.visivel()) continue;
+            shapes.setColor(Color.WHITE);
+            shapes.circle(d.posicao.x, d.posicao.y, d.raio);
+            shapes.setColor(Color.RED);
+            shapes.circle(d.posicao.x, d.posicao.y, d.raio * 0.6f);
+        }
+
+        // Monstros (cor muda com o efeito: lento = azulado, queimando = alaranjado, atordoado = amarelo)
+        for (int i = 0; i < monstros.size; i++) {
+            Monstro m = monstros.get(i);
+            float meio = m.tamanho / 2f;
+            if (m.estaPiscando())       corTemp.set(Color.WHITE);
+            else if (m.estaAtordoado()) corTemp.set(Color.YELLOW);
+            else if (m.estaLento())     corTemp.set(m.cor).lerp(Color.CYAN, 0.5f);
+            else if (m.estaQueimando()) corTemp.set(m.cor).lerp(Color.ORANGE, 0.5f);
+            else                        corTemp.set(m.cor);
+            shapes.setColor(corTemp);
+            shapes.rect(m.posicao.x - meio, m.posicao.y - meio, m.tamanho, m.tamanho);
+
+            float porcentagem = Math.max(0, m.vida / m.vidaMaxima);
+            shapes.setColor(Color.DARK_GRAY);
+            shapes.rect(m.posicao.x - meio, m.posicao.y + meio + 3, m.tamanho, 4);
+            shapes.setColor(Color.RED);
+            shapes.rect(m.posicao.x - meio, m.posicao.y + meio + 3, m.tamanho * porcentagem, 4);
+        }
+
+        // Projeteis
+        for (int i = 0; i < projeteis.size; i++) {
+            Projetil p = projeteis.get(i);
+            shapes.setColor(p.cor);
+            shapes.circle(p.posicao.x, p.posicao.y, p.raio);
+        }
+
+        // Heroi (pisca em branco quando esta invencivel)
+        float meioHeroi = heroi.tamanho / 2f;
+        shapes.setColor(heroi.estaInvencivel() ? Color.WHITE : classe.cor);
+        shapes.rect(heroi.posicao.x - meioHeroi, heroi.posicao.y - meioHeroi, heroi.tamanho, heroi.tamanho);
+
+        // Efeitos preenchidos dos poderes (laminas de vento, feixe de luz)
+        for (int i = 0; i < heroi.poderes.size; i++) heroi.poderes.get(i).desenharFormas(shapes, heroi);
+
+        shapes.end();
+    }
+
+    private void desenharHud() {
+        shapes.begin(ShapeRenderer.ShapeType.Filled);
+
+        // Barra de vida
+        shapes.setColor(Color.DARK_GRAY);
+        shapes.rect(10, ALTURA - 24, 200, 14);
+        shapes.setColor(Color.GREEN);
+        shapes.rect(10, ALTURA - 24, 200 * (heroi.vida / heroi.vidaMaxima), 14);
+
+        // Botao da habilidade
+        shapes.setColor(heroi.habilidadePronta() ? classe.cor : Color.DARK_GRAY);
+        shapes.circle(BOTAO_X, BOTAO_Y, BOTAO_RAIO);
+
+        shapes.end();
+    }
+
+    private void desenharTextos() {
+        batch.begin();
+        fonte.setColor(Color.WHITE);
+
+        // HUD (a fonte padrao nao tem acentos, por isso os textos estao sem eles)
+        fonte.draw(batch, "Vida: " + (int) heroi.vida + "/" + (int) heroi.vidaMaxima, 220, ALTURA - 12);
+        fonte.draw(batch, "Horda: " + hordas.getHordaAtual() + "/" + hordas.getTotalHordas(), 360, ALTURA - 12);
+        fonte.draw(batch, "Abates: " + abates, 480, ALTURA - 12);
+        fonte.draw(batch, classe.nome, 0, ALTURA - 12, LARGURA - 10, Align.right, false);
+
+        // Poderes ativos
+        StringBuilder sb = new StringBuilder("Poderes: ");
+        if (heroi.poderes.size == 0) sb.append("escolha o primeiro ao fim da horda 1");
+        for (int i = 0; i < heroi.poderes.size; i++) {
+            Poder p = heroi.poderes.get(i);
+            if (i > 0) sb.append("  |  ");
+            sb.append(p.tipo.nome).append(" Nv").append(p.getNivel());
+        }
+        if (heroi.elemento != null) sb.append("   [Elemento: ").append(heroi.elemento.nome).append("]");
+        fonte.draw(batch, sb.toString(), 10, 42);
+        fonte.draw(batch, classe.nomeHabilidade + "  [ESPACO]", 10, 20);
+
+        // Texto do botao: "HAB" quando pronta, segundos restantes quando recarregando
+        String textoBotao = heroi.habilidadePronta() ? "HAB" : String.valueOf((int) Math.ceil(heroi.getRecargaRestante()));
+        fonte.setColor(heroi.habilidadePronta() ? Color.BLACK : Color.WHITE);
+        fonte.draw(batch, textoBotao, BOTAO_X - BOTAO_RAIO, BOTAO_Y + 6, BOTAO_RAIO * 2, Align.center, false);
+
+        fonte.setColor(Color.WHITE);
+        if (!heroi.estaVivo()) {
+            fonte.draw(batch, "VOCE MORREU!", 0, ALTURA / 2f + 20, LARGURA, Align.center, false);
+            fonte.draw(batch, "R = recomecar   |   ESC ou toque = trocar de classe", 0, ALTURA / 2f - 5, LARGURA, Align.center, false);
+        } else if (hordas.concluida()) {
+            fonte.draw(batch, "FASE CONCLUIDA!", 0, ALTURA / 2f + 20, LARGURA, Align.center, false);
+            fonte.draw(batch, "R = jogar de novo   |   ESC ou toque = trocar de classe", 0, ALTURA / 2f - 5, LARGURA, Align.center, false);
+        } else if (hordas.emIntervalo() && !escolhendoRecompensa()) {
+            int proxima = hordas.getHordaAtual() + 1;
+            fonte.draw(batch, "Prepare-se! Horda " + proxima + " em " + (int) Math.ceil(hordas.getTempoIntervalo()) + "...",
+                0, ALTURA / 2f + 60, LARGURA, Align.center, false);
+        }
+        batch.end();
+    }
+
+    private void desenharEscolha() {
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        shapes.begin(ShapeRenderer.ShapeType.Filled);
+        shapes.setColor(0f, 0f, 0f, 0.7f);
+        shapes.rect(0, 0, LARGURA, ALTURA); // escurece o jogo por tras
+
+        for (int i = 0; i < opcoes.size; i++) {
+            Rectangle c = cards.get(i);
+            Recompensa r = opcoes.get(i);
+            boolean pequeno = c.height < 100;
+            shapes.setColor(0.16f, 0.16f, 0.20f, 1f);
+            shapes.rect(c.x, c.y, c.width, c.height);
+            shapes.setColor(r.getCor());
+            shapes.rect(c.x, c.y + c.height - (pequeno ? 22 : 30), c.width, pequeno ? 22 : 30);
+            if (!pequeno) shapes.circle(c.x + c.width / 2f, c.y + c.height - 75, 24); // "icone"
+        }
+        shapes.end();
+        Gdx.gl.glDisable(GL20.GL_BLEND);
+
+        batch.begin();
+        fonte.setColor(Color.WHITE);
+        fonte.draw(batch, tituloEscolha(), 0, ALTURA - 70, LARGURA, Align.center, false);
+        fonte.draw(batch, "Clique/toque no card ou aperte o numero", 0, 90, LARGURA, Align.center, false);
+        for (int i = 0; i < opcoes.size; i++) {
+            Rectangle c = cards.get(i);
+            Recompensa r = opcoes.get(i);
+            boolean pequeno = c.height < 100;
+            fonte.setColor(Color.BLACK);
+            fonte.draw(batch, (i + 1) + ". " + r.getNome(), c.x, c.y + c.height - (pequeno ? 5 : 9), c.width, Align.center, false);
+            fonte.setColor(Color.WHITE);
+            float yDescricao = pequeno ? c.y + c.height - 30 : c.y + 75;
+            fonte.draw(batch, r.getDescricao(), c.x + 8, yDescricao, c.width - 16, Align.center, true);
+        }
+        batch.end();
+    }
+
+    private String tituloEscolha() {
+        switch (modo) {
+            case PRIMEIRO_PODER: return "HORDA CONCLUIDA! ESCOLHA SEU PRIMEIRO PODER";
+            case ELEMENTO:       return "HORDA CONCLUIDA! ESCOLHA O ELEMENTO DA SUA ARMA";
+            case TROCA_ELEMENTO: return "MUDAR ELEMENTO: ESCOLHA O NOVO ELEMENTO";
+            case PERDER_BUFF:    return "PENALIDADE: ESCOLHA UM BUFF PARA PERDER (faltam " + heroi.penalidadesPendentes + ")";
+            default:             return "HORDA CONCLUIDA! ESCOLHA UMA RECOMPENSA";
+        }
+    }
+
+    @Override
+    public void resize(int width, int height) {
+        if (width <= 0 || height <= 0) return;
+        viewport.update(width, height, false);
+        viewportHud.update(width, height, true);
+    }
+
+    @Override
+    public void dispose() {
+        shapes.dispose();
+        batch.dispose();
+        fonte.dispose();
+    }
+}
